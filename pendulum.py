@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import pygame as pg
-from pygame.locals import *
+import pymunk as pm
 import math
+
+
 
 # Colors
 BLACK = (0, 0, 0)
@@ -16,192 +18,202 @@ RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 ORANGE = (255, 165, 0)
 
-# Constants
+
+
+# Pygame constants
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 512
+MID_WIDTH = WINDOW_WIDTH // 2
+MID_HEIGHT = WINDOW_HEIGHT // 2
 FPS = 60.
-G = 9.81
-PIXELS_PER_METER = 100
 
-# Phase Portrait
-class PhasePortrait:
-    def __init__(self):
-        self.size = 200
-        self.rect = pg.Rect(
-            WINDOW_WIDTH-self.size-20,
-            WINDOW_HEIGHT-self.size-20, 
-            self.size,
-            self.size
-        )
-        self.points = []
-        self.scale = 20.
 
-    def add_point(self, angle, velocity):
-        x = self.rect.centerx + angle * self.scale
-        y = self.rect.centery - velocity * self.scale
-        self.points.append((x, y))
 
-    def draw(self, screen):
-        # Border
-        pg.draw.rect(screen, BLACK, self.rect, 1)
-        
-        # Axes
-        start = (self.rect.left, self.rect.centery)
-        end = (self.rect.right-1, self.rect.centery)
-        pg.draw.line(screen, GRAY, start, end, 1)
-        start = (self.rect.centerx, self.rect.top)
-        end = (self.rect.centerx, self.rect.bottom-1)
-        pg.draw.line(screen, GRAY, start, end, 1)
+# Create a physics space
+space = pm.Space()
+space.gravity = pm.Vec2d(0.0, 981.0)
 
-        # Content
-        pg.draw.lines(screen, RED, False, self.points, 1)
 
-class Pendulum:
-    def __init__(self):
-        # Rail
-        self.rail_width = 600
-        self.rail_height = 4
-        self.rail_pos = WINDOW_WIDTH//2 - self.rail_width//2, WINDOW_HEIGHT//2-self.rail_height//2
 
-        # Cart
-        cart_width = 100
-        cart_height = 50
-        self.cart = pg.Rect(
-            WINDOW_WIDTH//2 - cart_width//2,
-            WINDOW_HEIGHT//2 - cart_height//2,
-            cart_width,
-            cart_height
-        )
-        self.cart_velocity = 0.
-        self.old_cart_velocity = 0.
-        self.cart_acceleration = 0.
-        self.is_cart_dragged = False
-        self.old_mouse_pos = None
-        self.pivot_x = self.cart.centerx
-        self.pivot_y = self.cart.centery
-        
-        # Physical values
-        self.length = 2.
-        self.angle = -math.pi + 0.001
-        self.angular_velocity = 0.
-        self.angular_acceleration = 0.
+# Parameters
+rod_length = 150.
 
-        # Bob
-        length_in_pixels = self.length * PIXELS_PER_METER
-        self.bob_mass = 2.
-        self.bob_x = self.pivot_x + length_in_pixels * math.sin(self.angle)
-        self.bob_y = self.pivot_y + length_in_pixels * math.cos(self.angle)
-        self.bob_radius = 0.2
+cart_mass = 4.0
+cart_size = (80., 40.)
+cart_damping = 0.125
 
-        self.last_update_time = pg.time.get_ticks()
+push_force = 6500.
+
+groove_size = (600., 8.0)
+
+bob_angle = 0.0
+bob_mass = 0.01
+bob_radius = 20.
+
+
+
+
+# Cart
+cart = pm.Body(
+    cart_mass,
+    pm.moment_for_box(cart_mass, cart_size),
+    pm.Body.DYNAMIC
+)
+cart_origin = (MID_WIDTH, MID_HEIGHT)
+cart.position = cart_origin
+cart_shape = pm.Poly.create_box(cart, cart_size)
+
+space.add(cart)
+space.add(cart_shape)
+
+
+
+# Groove for the cart
+groove_half_width = groove_size[0] // 2
+groove_half_height = groove_size[1] // 2
+groove_start = (MID_WIDTH-groove_half_width, cart.position.y) 
+groove_end = (MID_WIDTH+groove_half_width, cart.position.y)
+groove_joint = pm.GrooveJoint(
+    space.static_body,
+    cart,
+    groove_start,
+    groove_end,
+    (0, 0)
+)
+
+space.add(groove_joint)
+
+
+
+# Bob
+bob = pm.Body(
+    bob_mass,
+    pm.moment_for_circle(bob_mass, 0.0, bob_radius),
+    pm.Body.DYNAMIC
+)
+bob_origin = (
+    cart.position[0] + rod_length * math.sin(bob_angle),
+    cart.position[1] + rod_length * math.cos(bob_angle)
+)
+bob.position = bob_origin
+bob_shape = pm.Circle(bob, bob_radius)
+
+space.add(bob)
+space.add(bob_shape)
+
+
+
+# Rod
+rod = pm.PinJoint(cart, bob)
+space.add(rod)
+
+
+
+# Drawing pymunk objects with pygame
+def draw(screen):
+    # Groove
+    groove_rect = pg.Rect(
+        groove_start[0],
+        groove_start[1]-groove_half_height,
+        groove_size[0],
+        groove_size[1]
+    )
+    pg.draw.rect( screen, GRAY, groove_rect )
     
-    def update(self, friction=0.4, fluid_density=1.23):
-        # dt
-        current_update_time = pg.time.get_ticks()
-        dt = (current_update_time - self.last_update_time) / 1000.
-        self.last_update_time = current_update_time
+    # Cart
+    vertices = cart_shape.get_vertices()
+    top_left = cart.local_to_world( vertices[-1] )
+    pg.draw.rect( screen, BLUE, pg.Rect(top_left, cart_size) ) 
+    
+    # Rod
+    pg.draw.aaline( ## anti aliasing line
+        screen,
+        BLACK,
+        (cart.position.x, cart.position.y),
+        (bob.position.x, bob.position.y)
+    )
+    
+    # Bob
+    pg.draw.circle(
+        screen, 
+        RED,
+        (bob.position.x, bob.position.y),
+        bob_radius
+    )
+    
 
-        # Gravity
-        gravity_force = self.bob_mass * G
-        tangential_component_of_gravity_force = gravity_force * math.sin(self.angle)
-        gravity_torque = -tangential_component_of_gravity_force * self.length
 
-        # Friction
-        friction_torque = - friction * self.angular_velocity
+# User inputs handler
+def handle_input():
+    # Controlling the cart
+    keys_pressed = pg.key.get_pressed()
+    
+    left_pressed = keys_pressed[pg.K_LEFT]
+    right_pressed = keys_pressed[pg.K_RIGHT]
+    
+    if not (left_pressed ^ right_pressed) and abs(cart.velocity.x) > 0.0:
+        cart.velocity = ( cart.velocity.x * (1.0 - cart_damping), 0.0 )
+    elif left_pressed:
+        cart.apply_force_at_local_point( (-push_force, 0.0), (0.0, 0.0) )
+    elif right_pressed:
+        cart.apply_force_at_local_point( (push_force, 0.0), (0.0, 0.0) )
         
-        # Air resistance
-        # tangential_velocity = self.angular_velocity * self.length
-        # drag_coef = 0.47 # for a smooth sphere, fluid dynamics is complicated
-        # area = math.pi * (self.bob_radius ** 2)
-        # air_torque = - 0.5 * fluid_density * tangential_velocity * abs(tangential_velocity) * drag_coef * # # area # the absolute value takes care of the sign of the velocity
+    # Reset
+    if keys_pressed[pg.K_r]:
+        cart.position = cart_origin
+        cart.velocity = pm.Vec2d(0.0, 0.0)
+        bob.position = bob_origin
+        bob.velocity = pm.Vec2d(0.0, 0.0)
+    
+    
 
-        # Cart
-        cart_torque = - self.bob_mass * self.cart_acceleration * self.length * math.cos(self.angle)
+# Angle between vertical line and the rod
+def get_bob_angular_position():
+    vertical_vector = pm.Vec2d(0.0, 100.0)
+    bob_cart_vector = bob.position - cart.position
+    angle = bob_cart_vector.get_angle_between(vertical_vector)
+    
+    return angle
+    
+    
+# Angular velocity centered on cart
+def get_bob_angular_velocity():
+    relative_position = bob.position - cart.position
+    relative_velocity = bob.velocity - cart.velocity
+    distance_squared = relative_position.length ** 2
 
-        # Total
-        total_torque = gravity_torque + friction_torque + cart_torque # + air_torque 
+    p1 = relative_position.x * relative_velocity.y 
+    p2 = relative_position.y * relative_velocity.x
+    angular_velocity = (p1 - p2) / distance_squared
 
-        # Computing pendulum's new values
-        moment_of_inertia = self.bob_mass * (self.length ** 2) 
-        self.angular_acceleration = total_torque / moment_of_inertia
-        self.angular_velocity += self.angular_acceleration * dt
-        self.angle = self.angle + self.angular_velocity * dt
+    return angular_velocity
 
-        length_in_pixels = self.length * PIXELS_PER_METER
-        self.bob_x = self.pivot_x + length_in_pixels * math.sin(self.angle)
-        self.bob_y = self.pivot_y + length_in_pixels * math.cos(self.angle)
 
-    def move_cart(self, dist):
-        current_update_time = pg.time.get_ticks()
-        dt = (current_update_time - self.last_update_time) / 1000.
-        self.cart_velocity = (dist / PIXELS_PER_METER) / dt
-        self.cart_acceleration = (self.cart_velocity - self.old_cart_velocity) / dt
-        self.old_cart_velocity = self.cart_velocity
-
-        self.cart.x += dist
-        self.cart.x = max(
-            WINDOW_WIDTH//2-(self.rail_width//2)-(self.cart.width),
-            self.cart.x
-        )
-        self.cart.x = min(
-            WINDOW_WIDTH//2+(self.rail_width//2)-(self.cart.width//2),
-            self.cart.x
-        )
-        self.pivot_x = self.cart.centerx
-        self.pivot_y = self.cart.centery
-
-    def handle_cart(self):
-        if pg.mouse.get_pressed()[0]:
-            mouse_pos = pg.mouse.get_pos()
-            if self.is_cart_dragged:
-                self.move_cart(mouse_pos[0] - self.old_mouse_pos[0])
-                self.old_mouse_pos = mouse_pos
-            elif self.cart.collidepoint(mouse_pos):
-                self.is_cart_dragged = True
-                self.old_mouse_pos = mouse_pos
-        else:
-            self.is_cart_dragged = False
-            self.cart_velocity = 0.
-            self.cart_acceleration = 0.
-            self.old_cart_velocity = 0.
-            
-    def draw(self, screen):
-        pg.draw.rect(screen, BLUE, self.cart)
-        pg.draw.rect(screen, GRAY, (self.rail_pos, (self.rail_width, self.rail_height)))
-        pg.draw.line(screen, DARK_GRAY, (self.pivot_x, self.pivot_y), (self.bob_x, self.bob_y), 2)
-        bob_radius_in_pixels = self.bob_radius * PIXELS_PER_METER
-        pg.draw.circle(screen, ORANGE, (int(self.bob_x), int(self.bob_y)), int(bob_radius_in_pixels))
-        pg.draw.circle(screen, DARK_GRAY, (self.pivot_x, self.pivot_y), 5)
-
-# Init
+# Pygame initialisation
 pg.init()
 screen = pg.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-pg.display.set_caption("Pendulum")
-
-pendulum = Pendulum()
-phase_portrait = PhasePortrait()
-phase_portrait.add_point(pendulum.angle, pendulum.angular_velocity)
-phase_portrait.add_point(pendulum.angle, pendulum.angular_velocity)
-
+pg.display.set_caption("Cart-pendulum")
 clock = pg.time.Clock()
+
+
 
 # Main loop
 running = True
 while running:
+    
+    # Handling input and updating
     for event in pg.event.get():
-        if event.type == QUIT:
+        if event.type == pg.QUIT:
             running = False
-
-    # Update
-    pendulum.handle_cart()
-    pendulum.update()
-    phase_portrait.add_point(pendulum.angle, pendulum.angular_velocity)
-
-    # Draw
+    
+    handle_input()
+    space.step( 1.0 / FPS )
+    
+    # Drawing
     screen.fill(WHITE)
-    pendulum.draw(screen)
-    phase_portrait.draw(screen)
+    draw(screen)
     pg.display.flip()
-
+    
     clock.tick(FPS)
+    
 pg.quit()
