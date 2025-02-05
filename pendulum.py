@@ -1,78 +1,22 @@
-# -*- coding: utf-8 -*-
 import pygame as pg
 import pymunk as pm
-import math
-from dataclasses import dataclass
 
-
-
-# Colors
-BLACK = (0, 0, 0)
-DARK_GRAY = (55, 55, 55)
-GRAY = (110, 110, 110)
-WHITE = (255, 255, 255)
-CYAN = (0, 255, 255)
-YELLOW = (255, 255, 0)
-PURPLE = (128, 0, 128)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-ORANGE = (255, 165, 0)
-
-
-
-# Pygame constants
-WINDOW_WIDTH = 1024
-WINDOW_HEIGHT = 512
-MID_WIDTH = WINDOW_WIDTH // 2
-MID_HEIGHT = WINDOW_HEIGHT // 2
-FPS = 60.
-
-
-
-# Cart-pendulum simulation parameters
-@dataclass
-class Parameters:
-    rod_length: float = 150.0
-
-    cart_mass: float = 4.0
-    cart_size: pm.Vec2d = (80.0, 40.0)
-    cart_damping: float = 0.125
-    cart_origin = (MID_WIDTH, MID_HEIGHT)
-    
-    push_force: float = 6500.0
-
-    groove_size = (600.0, 8.0)
-    groove_half_width = groove_size[0] // 2
-    groove_half_height = groove_size[1] // 2
-    groove_start = (MID_WIDTH-groove_half_width, cart_origin[1]) 
-    groove_end = (MID_WIDTH+groove_half_width, cart_origin[1])    
-
-    bob_angle: float = math.pi / 2.0
-    bob_mass: float = 0.01
-    bob_radius: float = 20.0
-    bob_origin: pm.Vec2d = (
-        cart_origin[0] + rod_length * math.sin(bob_angle),
-        cart_origin[1] + rod_length * math.cos(bob_angle)
-    )
-
-
+from config import *
 
 class Simulation:
-    def __init__(self, params: Parameters):
+    def __init__(self):
         # Physics space and simulation paramaters
         self.space = pm.Space()
         self.space.gravity = pm.Vec2d(0.0, 981.0)
-        self.params = params
         
         # Cart init
         self.cart = pm.Body(
-            self.params.cart_mass,
-            pm.moment_for_box(self.params.cart_mass, self.params.cart_size),
+            cart_mass,
+            pm.moment_for_box(cart_mass, cart_size),
             pm.Body.DYNAMIC
         )
-        self.cart.position = self.params.cart_origin
-        self.cart_shape = pm.Poly.create_box(self.cart, self.params.cart_size)
+        self.cart.position = cart_origin
+        self.cart_shape = pm.Poly.create_box(self.cart, cart_size)
 
         self.space.add(self.cart)
         self.space.add(self.cart_shape)
@@ -81,26 +25,25 @@ class Simulation:
         self.groove_joint = pm.GrooveJoint(
             self.space.static_body,
             self.cart,
-            self.params.groove_start,
-            self.params.groove_end,
+            groove_start,
+            groove_end,
             (0, 0)
         )
-
         self.space.add(self.groove_joint)
         
         # Bob init
         self.bob = pm.Body(
-            self.params.bob_mass,
+            bob_mass,
             pm.moment_for_circle(
-                self.params.bob_mass,
+                bob_mass,
                 0.0,
-                self.params.bob_radius
+                bob_radius
             ),
             pm.Body.DYNAMIC
         )
         
-        self.bob.position = self.params.bob_origin
-        self.bob_shape = pm.Circle(self.bob, self.params.bob_radius)
+        self.bob.position = bob_origin
+        self.bob_shape = pm.Circle(self.bob, bob_radius)
 
         self.space.add(self.bob)
         self.space.add(self.bob_shape)
@@ -111,19 +54,22 @@ class Simulation:
 
 
     def draw(self, screen):
+        # Background
+        screen.fill(WHITE)
+              
         # Groove
         groove_rect = pg.Rect(
-            self.params.groove_start[0],
-            self.params.groove_start[1]-self.params.groove_half_height,
-            self.params.groove_size[0],
-            self.params.groove_size[1]
+            groove_start[0],
+            groove_start[1]-groove_half_height,
+            groove_size[0],
+            groove_size[1]
         )
         pg.draw.rect(screen, GRAY, groove_rect)
         
         # Cart
         vertices = self.cart_shape.get_vertices()
         top_left = self.cart.local_to_world( vertices[-1] )
-        pg.draw.rect(screen, BLUE, pg.Rect(top_left, self.params.cart_size)) 
+        pg.draw.rect(screen, BLUE, pg.Rect(top_left, cart_size)) 
         
         # Rod
         pg.draw.aaline( ## anti aliasing line
@@ -133,14 +79,23 @@ class Simulation:
             (self.bob.position.x, self.bob.position.y)
         )
         
+        # Change bob color depending on its angle
+        if abs(self.get_bob_angular_position()) > balance_threshold:
+            bob_color = GREEN
+        else:
+            bob_color = RED
+            
         # Bob
         pg.draw.circle(
             screen, 
-            RED,
+            bob_color,
             (self.bob.position.x, self.bob.position.y),
-            self.params.bob_radius
+            bob_radius
         )
-
+    
+    
+    def get_cart_position(self):
+        return self.cart.position.x - MID_WIDTH
     
     # Angle between vertical line and the rod
     def get_bob_angular_position(self):
@@ -163,11 +118,19 @@ class Simulation:
 
         return angular_velocity
     
+    def get_normalized_state(self):
+        return [
+            self.get_bob_angular_position() / math.pi,
+            self.get_bob_angular_velocity / 50.0,
+            self.get_cart_position / 300.0,
+            self.cart.velocity.x / 50.0
+        ]
+    
     # Reset the cart and pendulum
     def reset(self):
-        self.cart.position = self.params.cart_origin
+        self.cart.position = cart_origin
         self.cart.velocity = pm.Vec2d(0.0, 0.0)
-        self.bob.position = self.params.bob_origin
+        self.bob.position = bob_origin
         self.bob.velocity = pm.Vec2d(0.0, 0.0)
         
     # Handle the user (or AI) input for the cart
@@ -188,7 +151,7 @@ class Simulation:
         
         # Move the cart
         if left_pressed ^ right_pressed:
-            force = self.params.push_force
+            force = push_force
             applied_force = force*int(right_pressed) - force*int(left_pressed)
             self.cart.apply_force_at_local_point(
                 (applied_force, 0.0),
@@ -197,7 +160,7 @@ class Simulation:
         else:
             if abs(self.cart.velocity.x) > 0.0:
                 self.cart.velocity = (
-                    self.cart.velocity.x * (1.0 - self.params.cart_damping),
+                    self.cart.velocity.x * (1.0 - cart_damping),
                     0.0
                 )
 
@@ -207,38 +170,4 @@ class Simulation:
 
 
 
-# Pygame initialisation
-pg.init()
-screen = pg.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-pg.display.set_caption("Cart-pendulum")
-clock = pg.time.Clock()
 
-params = Parameters()
-simulation = Simulation(params)
-
-
-
-# Main loop
-running = True
-while running:
-    
-    # Handling input and updating
-    for event in pg.event.get():
-        if event.type == pg.QUIT:
-            running = False
-        elif event.type == pg.KEYDOWN:
-            if event.key == pg.K_r:
-                simulation.reset()
-    
-    keys_pressed = pg.key.get_pressed()
-    simulation.handle_cart(keys_pressed)
-    simulation.space.step( 1.0 / FPS )
-    
-    # Drawing
-    screen.fill(WHITE)
-    simulation.draw(screen)
-    pg.display.flip()
-    
-    clock.tick(FPS)
-    
-pg.quit()
